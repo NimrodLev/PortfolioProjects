@@ -24,7 +24,7 @@ ORDER BY 1,2
 
 SELECT Location, date, Population, total_cases, (total_cases/population)*100 AS PercentPopulationInfected
 FROM PortfolioProject..CovidDeaths
-WHERE location like '%Israel%'
+WHERE location LIKE '%Israel%'
 ORDER BY 1,2
 
 -- Looking at Countries with Highest Infection Rate compared to Population
@@ -49,9 +49,9 @@ ORDER BY TotalDeathCount DESC
 SELECT continent, MAX(total_deaths) AS TotalDeathCount
 FROM PortfolioProject..CovidDeaths
 --Where location like '%states%'
-WHERE continent is not null
+WHERE continent IS NOT NULL
 GROUP BY continent
-ORDER BY TotalDeathCount desc
+ORDER BY TotalDeathCount DESC
 
 
 
@@ -61,7 +61,7 @@ SET ANSI_WARNINGS OFF;
 SELECT SUM(new_cases) AS total_cases, SUM(CAST(new_deaths AS int)) AS total_deaths, SUM(CAST(new_deaths AS int))/SUM(New_Cases)*100 AS DeathPercentage
 FROM PortfolioProject..CovidDeaths
 --Where location like '%states%'
-WHERE continent is not null 
+WHERE continent IS NOT NULL
 --Group By date
 ORDER BY 1,2
 
@@ -71,9 +71,9 @@ ORDER BY 1,2
 SELECT dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations, SUM(CONVERT(bigint,vac.new_vaccinations)) OVER (Partition by dea.location Order by dea.Location, dea.Date) as RollingPeopleVaccinated
 FROM PortfolioProject..CovidDeaths dea
 JOIN PortfolioProject..CovidVaccinations vac
-	On dea.location = vac.location
-	and dea.date = vac.date
-WHERE dea.continent is not null 
+	ON dea.location = vac.location
+	AND dea.date = vac.date
+WHERE dea.continent IS NOT NULL
 ORDER BY 1,2,3\
 
 -- USE CTE
