@@ -1,11 +1,14 @@
+---A general query to get a broad sense of the database.
 SELECT *
 FROM CustomerServiceChats
 
+---Checking the amount of chats closed by Customers, System and Representatives.
 SELECT Chat_Closed_By, COUNT(*) AS TotalChats
 FROM CustomerServiceChats
 GROUP BY Chat_Closed_By
 ORDER BY TotalChats DESC;
 
+---Analyzing how many ratings were received for each rating rank (0-10)
 SELECT Customer_Rating, COUNT(*) AS RatingCount
 FROM CustomerServiceChats
 GROUP BY Customer_Rating
@@ -22,12 +25,14 @@ ORDER BY AverageRating DESC, TotalChats DESC;
 --- Agents Ranked
 WITH AgentStats AS (
     SELECT Agent, AVG(DATEDIFF(SECOND, 0, Response_Time_of_Agent)) AS AvgResponseTimeInSeconds,
-	AVG(Customer_Rating) AS AverageRating, COUNT(*) AS TotalChats
+	AVG(Customer_Rating) AS AverageRating, COUNT(*) AS TotalChats,
+	COUNT(CASE WHEN Chat_Closed_By IS NOT NULL THEN 1 END) AS ClosedChats,
+    COUNT(CASE WHEN Transferred_Chat = 1 THEN 1 END) AS TransferredChats -- Adjusted for bit comparison
     FROM CustomerServiceChats
     GROUP BY Agent
 )
 
-SELECT Agent, AvgResponseTimeInSeconds, AverageRating, TotalChats, 
+SELECT Agent, AvgResponseTimeInSeconds, AverageRating, TotalChats, ClosedChats, TransferredChats,
 DENSE_RANK() OVER (ORDER BY AverageRating DESC, AvgResponseTimeInSeconds ASC, TotalChats DESC) AS RankByRating
 FROM AgentStats
 ORDER BY RankByRating;
@@ -108,22 +113,31 @@ ORDER BY TotalChats DESC;
 /*
 This next query provides insight into the workload distribution and performance of customer service agents throughout the day. 
 It breaks down chat volumes, average response times, and average customer ratings by each hour of the day. 
-By analyzing this data, you can identify peak hours with a high number of chats and assess whether response times 
-and ratings drop during these periods. 
+Additionally, it calculates a rolling sum of total chats, allowing for a better understanding of cumulative workload trends as the day progresses. 
 
-The goal of this analysis is to recommend potential workload balancing, where more agents could be assigned 
-during busy hours to ensure faster response times and maintain a high level of customer satisfaction.
+By analyzing this data, you can identify peak hours with a high number of chats and assess whether response times and ratings drop during these periods.
+The rolling sum further highlights how chat volume builds over the course of the day, which can reveal patterns in customer demand and agent performance.
+
+The goal of this analysis is to recommend potential workload balancing,
+where more agents could be assigned during busy hours to ensure faster response times and maintain a high level of customer satisfaction.
+Understanding both the individual hour metrics and the cumulative totals will provide a clearer picture for making data-driven staffing decisions.
 */
 
 WITH HourlyChatAnalysis AS (
-    SELECT DATEPART(HOUR, Transaction_Start_Date) AS HourOfDay, COUNT(*) AS TotalChats,
-        AVG(DATEDIFF(SECOND, 0, Response_Time_of_Agent)) AS AvgResponseTimeInSeconds,
-        AVG(Customer_Rating) AS AverageRating
+    SELECT DATEPART(HOUR, Transaction_Start_Date) AS HourOfDay,
+           COUNT(*) AS TotalChats,
+           AVG(DATEDIFF(SECOND, 0, Response_Time_of_Agent)) AS AvgResponseTimeInSeconds,
+           AVG(Customer_Rating) AS AverageRating
     FROM CustomerServiceChats
+    WHERE CAST(Transaction_Start_Date AS DATE) = '2018-06-08'
     GROUP BY DATEPART(HOUR, Transaction_Start_Date)
 )
 
-SELECT HourOfDay, TotalChats, AvgResponseTimeInSeconds,AverageRating
+SELECT HourOfDay,
+       TotalChats,
+       AvgResponseTimeInSeconds,
+       AverageRating,
+       SUM(TotalChats) OVER (ORDER BY HourOfDay ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS Rolling_Chats_Sum
 FROM HourlyChatAnalysis
 ORDER BY HourOfDay ASC;
 
@@ -171,32 +185,3 @@ GROUP BY Agent, CASE
         ELSE 'Complex'
     END
 	ORDER BY AvgRating DESC;
-
---- Rolling averages.
-/*This following query calculates rolling averages for the number of chats handled by agents over a specified timeframe.
-By utilizing the window function, it computes the average total chats for each agent over the current hour and the two preceding hours.
-This approach smooths out fluctuations in the data, allowing for a clearer analysis of trends in agent performance.
-Rolling averages provide insights into how agent workload varies throughout the day, highlighting periods of high activity and enabling better resource allocation.
-By tracking these trends, management can make informed decisions regarding staffing needs and performance evaluations, ultimately improving overall customer service quality.*/
-
-WITH HourlyData AS (
-    SELECT 
-        DATEPART(HOUR, [Transaction_Start_Date]) AS Transaction_Hour,  -- Extracting hour from Transaction Start Date
-        COUNT(*) AS TotalChats,
-        AVG([Customer_Rating]) AS AverageRating
-    FROM 
-        CustomerServiceChats
-    GROUP BY 
-        DATEPART(HOUR, [Transaction_Start_Date])
-)
-
-SELECT 
-    Transaction_Hour,
-    TotalChats,
-    AverageRating,
-    AVG(TotalChats) OVER (ORDER BY Transaction_Hour ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS RollingAverageChats,
-    AVG(AverageRating) OVER (ORDER BY Transaction_Hour ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS RollingAverageRating
-FROM 
-    HourlyData
-ORDER BY 
-    Transaction_Hour;
