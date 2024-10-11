@@ -22,20 +22,31 @@ FROM CustomerServiceChats
 GROUP BY Agent
 ORDER BY AverageRating DESC, TotalChats DESC;
 
---- Agents Ranked
+--- Agents Stats, Performance Feedback
 WITH AgentStats AS (
-    SELECT Agent, AVG(DATEDIFF(SECOND, 0, Response_Time_of_Agent)) AS AvgResponseTimeInSeconds,
-	AVG(Customer_Rating) AS AverageRating, COUNT(*) AS TotalChats,
-	COUNT(CASE WHEN Chat_Closed_By IS NOT NULL THEN 1 END) AS ClosedChats,
-    COUNT(CASE WHEN Transferred_Chat = 1 THEN 1 END) AS TransferredChats -- Adjusted for bit comparison
+    SELECT Agent, 
+           AVG(DATEDIFF(SECOND, 0, Response_Time_of_Agent)) AS AvgResponseTimeInSeconds,
+           AVG(Customer_Rating) AS AverageRating, 
+           COUNT(*) AS TotalChats,
+           COUNT(CASE WHEN Chat_Closed_By IS NOT NULL THEN 1 END) AS ClosedChats,
+           COUNT(CASE WHEN Transferred_Chat = 1 THEN 1 END) AS TransferredChats
     FROM CustomerServiceChats
     GROUP BY Agent
 )
 
-SELECT Agent, AvgResponseTimeInSeconds, AverageRating, TotalChats, ClosedChats, TransferredChats,
-DENSE_RANK() OVER (ORDER BY AverageRating DESC, AvgResponseTimeInSeconds ASC, TotalChats DESC) AS RankByRating
+SELECT Agent, 
+       AvgResponseTimeInSeconds, 
+       AverageRating, 
+       TotalChats, 
+       ClosedChats, 
+       TransferredChats,
+       CASE 
+           WHEN AverageRating < 4 THEN 'Needs Improvement'
+           WHEN AverageRating >= 4 AND AverageRating < 7 THEN 'Good'
+           ELSE 'Excellent'
+       END AS PerformanceFeedback
 FROM AgentStats
-ORDER BY RankByRating;
+ORDER BY AverageRating DESC, AvgResponseTimeInSeconds ASC;
 
 /* This next query calculates the percentile rank of each agent's average response time. It uses a window function to assign percentiles.
 That is, essentially determining how an individual agent's performance compares to that of all other agents in the dataset*/
@@ -111,35 +122,49 @@ AND (TotalChats < 30 OR TotalChats BETWEEN 30 AND 60)  -- Filter for Low and Med
 ORDER BY TotalChats DESC;
 
 /*
-This next query provides insight into the workload distribution and performance of customer service agents throughout the day. 
-It breaks down chat volumes, average response times, and average customer ratings by each hour of the day. 
-Additionally, it calculates a rolling sum of total chats, allowing for a better understanding of cumulative workload trends as the day progresses. 
+This query provides a comprehensive analysis of customer service chat activity and agent performance throughout the day.
+It breaks down chat volumes, average response times, customer ratings, and the number of active agents by each hour.
+Additionally, it calculates a rolling sum of total chats to reveal cumulative workload trends as the day progresses.
+A new column, ChatsPerAgent, shows the ratio of chats to active agents, offering insights into how evenly the workload is distributed among agents.
 
-By analyzing this data, you can identify peak hours with a high number of chats and assess whether response times and ratings drop during these periods.
-The rolling sum further highlights how chat volume builds over the course of the day, which can reveal patterns in customer demand and agent performance.
-
-The goal of this analysis is to recommend potential workload balancing,
-where more agents could be assigned during busy hours to ensure faster response times and maintain a high level of customer satisfaction.
-Understanding both the individual hour metrics and the cumulative totals will provide a clearer picture for making data-driven staffing decisions.
+By analyzing peak hours, you can assess whether response times and customer satisfaction are affected when chat volumes are high,
+and whether the number of agents was sufficient to handle the demand.
+The rolling sum and chat-per-agent ratio together help identify both cumulative demand and per-agent workload.
+This data can assist in developing strategies for workload balancing,
+ensuring that the right number of agents is allocated during busier times to maintain quick response times and high customer satisfaction.
 */
 
 WITH HourlyChatAnalysis AS (
-    SELECT DATEPART(HOUR, Transaction_Start_Date) AS HourOfDay,
-           COUNT(*) AS TotalChats,
-           AVG(DATEDIFF(SECOND, 0, Response_Time_of_Agent)) AS AvgResponseTimeInSeconds,
-           AVG(Customer_Rating) AS AverageRating
+    SELECT 
+        DATEPART(HOUR, Transaction_Start_Date) AS HourOfDay,
+        COUNT(*) AS TotalChats,
+        AVG(DATEDIFF(SECOND, 0, Response_Time_of_Agent)) AS AvgResponseTimeInSeconds,
+        AVG(Customer_Rating) AS AverageRating
     FROM CustomerServiceChats
     WHERE CAST(Transaction_Start_Date AS DATE) = '2018-06-08'
     GROUP BY DATEPART(HOUR, Transaction_Start_Date)
+),
+ActiveAgentsPerHour AS (
+    SELECT 
+        DATEPART(HOUR, Transaction_Start_Date) AS HourOfDay,
+        COUNT(DISTINCT Agent) AS ActiveAgents
+    FROM CustomerServiceChats
+    WHERE Agent IS NOT NULL
+    GROUP BY DATEPART(HOUR, Transaction_Start_Date)
 )
 
-SELECT HourOfDay,
-       TotalChats,
-       AvgResponseTimeInSeconds,
-       AverageRating,
-       SUM(TotalChats) OVER (ORDER BY HourOfDay ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS Rolling_Chats_Sum
-FROM HourlyChatAnalysis
-ORDER BY HourOfDay ASC;
+SELECT 
+    hca.HourOfDay,
+    hca.TotalChats,
+    hca.AvgResponseTimeInSeconds,
+    hca.AverageRating,
+    aap.ActiveAgents,
+    SUM(hca.TotalChats) OVER (ORDER BY hca.HourOfDay ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS Rolling_Chats_Sum,
+    ROUND(CAST(hca.TotalChats AS FLOAT) / NULLIF(aap.ActiveAgents, 0),2) AS ChatsPerAgent -- Calculate total chats per active agent
+FROM HourlyChatAnalysis hca
+JOIN ActiveAgentsPerHour aap
+    ON hca.HourOfDay = aap.HourOfDay
+ORDER BY hca.HourOfDay ASC;
 
 /* 
 This next query examines the correlation between the number of chats handled by each agent and their average customer ratings. 
